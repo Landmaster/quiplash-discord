@@ -961,7 +961,6 @@ function genRandLetterWeighted(randFunc) {
 	return String.fromCharCode('A'.charCodeAt(0) + bounds.gt(LETTER_FREQ_TABLE, randIdx));
 }
 
-
 /**
  *
  * DEFAULT PROMPTS
