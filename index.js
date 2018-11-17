@@ -56,6 +56,12 @@ function GameInstance(channelId, initiator, promptURL) {
 	
 	/**
 	 *
+	 * @type {Set<string>}
+	 */
+	this.audience = new Set();
+	
+	/**
+	 *
 	 * @type {Map<string, number>}
 	 */
 	this.playerScores = new Map();
@@ -124,32 +130,33 @@ function GameInstance(channelId, initiator, promptURL) {
 	
 	this.curPromptsPromise = this.prompts.then(prompts => _.sample(prompts, this.maxPlayers()*2))
 }
-GameInstance.prototype.getAllPlayersMention = function() {
-	let res = '';
-	for (let playerID of this.players) {
-		res += '<@'+playerID+'>\n';
-	}
-	return res;
-};
 GameInstance.prototype.addPlayer = function(playerID) {
 	let channel = client.channels.get(this.channelId);
 	let maxPlayers = this.maxPlayers();
 	if (this.round >= 1) {
+		this.addAudience(playerID);
 		// nothing
-	} if (playerToGameInstance.has(playerID)) {
-		channel.send('<@'+playerID+'> has already joined this or some other Quiplash game');
+	} else if (participantToGameInstance.has(playerID)) {
+		channel.send('<@'+playerID+'> has already joined this or some other Quiplash game as player or audience');
 	} else if (this.players.size <= maxPlayers) {
 		this.players.add(playerID);
-		playerToGameInstance.set(playerID, this);
+		participantToGameInstance.set(playerID, this);
 		channel.send('<@'+playerID+'> joined');
 	} else {
-		channel.send('<@'+playerID+'> could not join, because there are already '+maxPlayers+' players in the game');
+		channel.send('There are already '+maxPlayers+' players in the game, so <@'+playerID+'> will join as audience');
+		this.addAudience(playerID);
 	}
 };
 GameInstance.prototype.removePlayer = function(playerID, verbose) {
 	let channel = client.channels.get(this.channelId);
 	if (!this.players.has(playerID)) {
-		if (verbose) channel.send('<@'+playerID+'> already left or is not in this game');
+		if (this.audience.has(playerID)) {
+			this.audience.delete(playerID);
+			participantToGameInstance.delete(playerID);
+			if (verbose) channel.send('<@'+playerID+'> left the audience');
+		} else {
+			if (verbose) channel.send('<@' + playerID + '> already left or is not in this game');
+		}
 	} else {
 		this.players.delete(playerID);
 		if (this.responses.has(playerID)) {
@@ -169,7 +176,7 @@ GameInstance.prototype.removePlayer = function(playerID, verbose) {
 			}
 		}
 		this.playerScores.delete(playerID);
-		playerToGameInstance.delete(playerID);
+		participantToGameInstance.delete(playerID);
 		if (verbose) {
 			channel.send('<@'+playerID+'> left');
 			if (this.round >= 1 && this.players.size < 3) {
@@ -179,15 +186,26 @@ GameInstance.prototype.removePlayer = function(playerID, verbose) {
 		}
 	}
 };
+GameInstance.prototype.addAudience = function (playerID) {
+	let channel = client.channels.get(this.channelId);
+	if (!participantToGameInstance.has(playerID)) {
+		this.audience.add(playerID);
+		participantToGameInstance.set(playerID, this);
+		channel.send('<@'+playerID+'> was added as audience');
+	} else {
+		channel.send('<@'+playerID+'> is already a player or audience');
+	}
+};
 GameInstance.prototype.create = function() {
 	channelToGameInstance.set(this.channelId, this);
 	let channel = client.channels.get(this.channelId);
 	channel.send('<@'+this.initiator+'> created a Quiplash game.\n' +
-		'Text "/ql join" on this channel to join this game, and "/ql leave" to leave.\n' +
+		'Text "/ql join" on this channel to join this game, and "/ql leave" to leave the game or audience.\n' +
 		'A maximum of '+this.maxPlayers()+' players can join.\n' +
+		'Anyone who joins **after** the game starts or when the game is full, or anyone who texts "/ql aud" becomes part of the audience.\n' +
 		'<@'+this.initiator+'> can text "/ql start" to start once everyone is ready, or let it start automatically after '+this.autoStartTime()+' seconds.\n' +
 		'Both this person and anyone capable of deleting messages in this channel can halt this game at any time with "/ql stop".\n'+
-		'Anyone in this channel can vote for the best quip, even if not in the game!');
+		'Players, as well as anyone in the audience, can vote for the best quip!');
 	let autoStartTime = this.autoStartTime();
 	let self = this;
 	this.gameloopHandlers.add(function handle() {
@@ -198,8 +216,7 @@ GameInstance.prototype.create = function() {
 		switch (autoStartTime - self.elapsedTime) {
 			case 15:
 			case 30:
-			case 60:
-				channel.send(self.getAllPlayersMention()+''+(autoStartTime - self.elapsedTime)+' seconds left until Quiplash starts');
+				channel.send((autoStartTime - self.elapsedTime)+' seconds left until Quiplash starts automatically');
 		}
 		if (self.elapsedTime === autoStartTime) {
 			self.start(false);
@@ -207,19 +224,19 @@ GameInstance.prototype.create = function() {
 	});
 };
 GameInstance.prototype.maxPlayers = function() { return 8; };
-GameInstance.prototype.autoStartTime = function() { return 90; };
-GameInstance.prototype.mainPromptRespTime = function() { return 110; };
+GameInstance.prototype.autoStartTime = function() { return 180; };
+GameInstance.prototype.mainPromptRespTime = function() { return 130; };
 GameInstance.prototype.start = function (isInitiated) {
 	let channel = client.channels.get(this.channelId);
 	if (this.players.size < 3) {
 		if (!isInitiated) {
-			channel.send('Quiplash does not have enough players! At least 3 are needed, stopping');
+			channel.send('Quiplash does **not** have enough players! At least 3 are needed, stopping');
 			this.stop(false);
 		} else {
 			channel.send('At least 3 players are needed to start.');
 		}
 	} else if (this.round === 0) {
-		channel.send(this.getAllPlayersMention()+'Quiplash has started! <@' + client.user.id + '> will send you prompts directly to answer.');
+		channel.send('Quiplash has started! <@' + client.user.id + '> will send you prompts directly to answer.');
 		this.executeRound();
 	}
 };
@@ -240,7 +257,7 @@ GameInstance.prototype.executeRound = function () {
 			channel.send('__**ROUND TWO**__\n*All point values 2×!*');
 		}
 		
-		channel.send(this.getAllPlayersMention()+'**Answer the prompts sent by <@'+client.user.id+'> by direct message now. You have '+this.mainPromptRespTime()+' seconds.**');
+		channel.send('**Players, answer the prompts sent by <@'+client.user.id+'> by direct message now. You have '+this.mainPromptRespTime()+' seconds.**');
 		
 		this.curPromptsPromise.then(curPrompts => {
 			for (let i = 0; i < congaLine.length; ++i) {
@@ -292,8 +309,7 @@ GameInstance.prototype.executeRound = function () {
 					case 60:
 					case 30:
 					case 15:
-						let warning = (mainPromptRespTime - (self.elapsedTime - startTime))+' seconds left to type in both responses'
-						channel.send(self.getAllPlayersMention()+warning);
+						let warning = (mainPromptRespTime - (self.elapsedTime - startTime))+' seconds left to type in both responses';
 						for (let playerID of self.players) {
 							let member = channel.members.get(playerID);
 							if (!member.user.bot) {
@@ -301,11 +317,13 @@ GameInstance.prototype.executeRound = function () {
 							}
 						}
 				}
+				//console.log(mainPromptRespTime - (self.elapsedTime - startTime));
 				if (self.elapsedTime - startTime === mainPromptRespTime) {
-					for (let response in self.responses.values()) {
+					//console.log(self.responses, self.responses0);
+					for (let response of self.responses.values()) {
 						response.resolve(GameInstance.SAFETY_QUIP);
 					}
-					for (let response0 in self.responses0.values()) {
+					for (let response0 of self.responses0.values()) {
 						response0.resolve(GameInstance.SAFETY_QUIP);
 					}
 				}
@@ -325,7 +343,7 @@ GameInstance.prototype.executeRound = function () {
 			if (!player.user.bot) player.send(promptStr);
 		}
 		
-		channel.send(this.getAllPlayersMention()+'**Answer the prompts sent by <@'+client.user.id+'> by direct message now. You have '+this.finalPromptRespTime()+' seconds.**');
+		channel.send('**Players, answer the prompt sent by <@'+client.user.id+'> by direct message now. You have '+this.finalPromptRespTime()+' seconds.**');
 		for (let playerID of frozenPlayerList) {
 			let player = channel.members.get(playerID);
 			if (!player.user.bot) player.send('**Answer the prompt here!**');
@@ -352,7 +370,6 @@ GameInstance.prototype.executeRound = function () {
 				case 30:
 				case 15:
 					let warning = (finalPromptRespTime - (self.elapsedTime - startTime))+' seconds left to type in a response';
-					channel.send(self.getAllPlayersMention()+warning);
 					for (let playerID of self.players) {
 						let member = channel.members.get(playerID);
 						if (!member.user.bot) {
@@ -361,7 +378,7 @@ GameInstance.prototype.executeRound = function () {
 					}
 			}
 			if (self.elapsedTime - startTime === finalPromptRespTime) {
-				for (let response in self.responses.values()) {
+				for (let response of self.responses.values()) {
 					response.resolve(GameInstance.SAFETY_QUIP);
 				}
 			}
@@ -373,7 +390,7 @@ GameInstance.prototype.executeRound = function () {
 	}
 };
 GameInstance.prototype.finalPromptRespTime = function () {
-	return 80;
+	return 100;
 };
 GameInstance.prototype.doFinalVoting = function (frozenPlayerList, finalPrompt) {
 	this.isVoting = true;
@@ -387,10 +404,10 @@ GameInstance.prototype.doFinalVoting = function (frozenPlayerList, finalPrompt) 
 		'Send the numbers of your **'+numVotes+'** favorite responses (**including** your own, as long as you do **not** pick yourself as the 1st choice), in **order of preference**, **directly** to <@'+client.user.id+'> to vote!\n' +
 		'The audience can join in too!';
 	
-	channel.send('@here\n'+voteNuncString);
+	channel.send(voteNuncString);
 	channel.send(finalPrompt);
 	for (let guildMember of channel.members.values()) {
-		if (!guildMember.user.bot) {
+		if (!guildMember.user.bot && this.isPlayerActive(guildMember.user.id)) {
 			guildMember.send(voteNuncString);
 			guildMember.send(finalPrompt);
 		}
@@ -423,7 +440,7 @@ GameInstance.prototype.doFinalVoting = function (frozenPlayerList, finalPrompt) 
 			channel.send('Vote for your **'+numVotes+'** favorites directly to <@'+client.user.id+'>!');
 			
 			for (let guildMember of channel.members.values()) {
-				if (!guildMember.user.bot) {
+				if (!guildMember.user.bot && self.isPlayerActive(guildMember.user.id)) {
 					guildMember.send(finalRespsListStr);
 					guildMember.send('Vote for your **'+numVotes+'** favorites here! You have '+finalVoteTime+' seconds to vote!');
 					let curIdx = frozenPlayerList.indexOf(guildMember.user.id);
@@ -437,12 +454,11 @@ GameInstance.prototype.doFinalVoting = function (frozenPlayerList, finalPrompt) 
 		if (finalVoteDelayTime < self.elapsedTime - startTime && self.elapsedTime - startTime < finalVoteDelayTime + finalVoteTime) {
 			switch (finalVoteDelayTime + finalVoteTime - (self.elapsedTime - startTime)) {
 				case 10:
-				case 20:
-				case 30:
+				case 25:
 					let notifStr = `${finalVoteDelayTime + finalVoteTime - (self.elapsedTime - startTime)} seconds left to vote!`;
-					channel.send('@here\n'+notifStr);
+					//channel.send('@here\n'+notifStr);
 					for (let guildMember of channel.members.values()) {
-						if (!guildMember.user.bot) {
+						if (!guildMember.user.bot && self.isPlayerActive(guildMember.user.id)) {
 							guildMember.send(notifStr);
 						}
 					}
@@ -498,9 +514,9 @@ GameInstance.prototype.doFinalVoting = function (frozenPlayerList, finalPrompt) 
 				finalScoreIncrsString += `__Answer ${i+1}__ belonged to <@${frozenPlayerList[i]}>, who gets ${finalScores[i]} points (${finalVoteCount[i][0] || 0} gold, ${finalVoteCount[i][1] || 0} silver, ${finalVoteCount[i][2] || 0} bronze)\n`;
 			}
 			
-			channel.send('@here\n'+finalScoreIncrsString);
+			channel.send(finalScoreIncrsString);
 			for (let guildMember of channel.members.values()) {
-				if (!guildMember.user.bot) {
+				if (!guildMember.user.bot && self.isPlayerActive(guildMember.user.id)) {
 					guildMember.send(finalScoreIncrsString);
 				}
 			}
@@ -511,10 +527,10 @@ GameInstance.prototype.doFinalVoting = function (frozenPlayerList, finalPrompt) 
 	});
 };
 GameInstance.prototype.finalVoteDelayTime = function() {
-	return 5;
+	return 7;
 };
 GameInstance.prototype.finalVoteTime = function() {
-	return 40;
+	return 45;
 };
 GameInstance.prototype.recap = function (final) {
 	let recapString = '';
@@ -525,10 +541,10 @@ GameInstance.prototype.recap = function (final) {
 	}
 	
 	let channel = client.channels.get(this.channelId);
-	channel.send('@here\n'+recapString);
+	channel.send(recapString);
 	
 	for (let guildMember of channel.members.values()) {
-		if (!guildMember.user.bot) {
+		if (!guildMember.user.bot && this.isPlayerActive(guildMember.user.id)) {
 			guildMember.send('Check out '+channel+' for the score recap!');
 		}
 	}
@@ -551,6 +567,7 @@ GameInstance.prototype.recap = function (final) {
 		channel.send(congratsString);
 	}
 };
+GameInstance.prototype.isPlayerActive = function (playerID) { return this.audience.has(playerID) || this.players.has(playerID); };
 GameInstance.prototype.doVoting = function (curPrompts, congaLine) {
 	this.isVoting = true;
 	
@@ -562,9 +579,9 @@ GameInstance.prototype.doVoting = function (curPrompts, congaLine) {
 		'Send "1" or "2" **directly** to <@'+client.user.id+'> to pick which numbered quip is the funniest!\n' +
 		'The audience can join in too!';
 	
-	channel.send('@here\n'+voteNuncString);
+	channel.send(voteNuncString);
 	for (let guildMember of channel.members.values()) {
-		if (!guildMember.user.bot) {
+		if (!guildMember.user.bot && this.isPlayerActive(guildMember.user.id)) {
 			guildMember.send(voteNuncString);
 		}
 	}
@@ -604,7 +621,7 @@ GameInstance.prototype.doVoting = function (curPrompts, congaLine) {
 			let promptStr = '__**Prompt:**__ '+curPrompts[(self.round - 1) * self.maxPlayers() + promptIdx];
 			channel.send(promptStr);
 			for (let guildMember of channel.members.values()) {
-				if (!guildMember.user.bot) {
+				if (!guildMember.user.bot && self.isPlayerActive(guildMember.user.id)) {
 					guildMember.send(promptStr);
 				}
 			}
@@ -616,7 +633,7 @@ GameInstance.prototype.doVoting = function (curPrompts, congaLine) {
 			let respString0 = '__Answer 2:__ '+self.responses0.get(playerID0).value();
 			channel.send(respString+'\n'+respString0+'\nSend "1" or "2" **directly** to <@'+client.user.id+'> now!');
 			for (let guildMember of channel.members.values()) {
-				if (!guildMember.user.bot) {
+				if (!guildMember.user.bot && self.isPlayerActive(guildMember.user.id)) {
 					guildMember.send(respString+'\n'+respString0);
 					if ([playerID,playerID0].indexOf(guildMember.user.id) < 0) {
 						guildMember.send('**Vote "1" or "2" for your favorite __here!__ You have '+voteTime+' seconds.**');
@@ -631,6 +648,8 @@ GameInstance.prototype.doVoting = function (curPrompts, congaLine) {
 		}
 		
 		if (timeOffset % MODULUS === voteDelayTime + voteTime) {
+			//console.log(self.votedFor1);
+			
 			let mainVotesFor1Iter = wu(self.votedFor1)
 				.filter(kv => self.players.has(kv[0]) && kv[1]);
 			let mainVotesFor1 = wu(self.votedFor1)
@@ -693,7 +712,7 @@ GameInstance.prototype.doVoting = function (curPrompts, congaLine) {
 			
 			channel.send(respString);
 			for (let guildMember of channel.members.values()) {
-				if (!guildMember.user.bot) {
+				if (!guildMember.user.bot && self.isPlayerActive(guildMember.user.id)) {
 					guildMember.send(respString);
 				}
 			}
@@ -705,8 +724,8 @@ GameInstance.prototype.doVoting = function (curPrompts, congaLine) {
 GameInstance.prototype.getRoundMultipler = function() {
 	return this.round;
 };
-GameInstance.prototype.voteDelayTime = function() {return 4;};
-GameInstance.prototype.voteTime = function() {return 18;};
+GameInstance.prototype.voteDelayTime = function() {return 7;};
+GameInstance.prototype.voteTime = function() {return 24;};
 GameInstance.prototype.endVoteDelayTime = function() {return 7;};
 Object.defineProperty(GameInstance, 'SAFETY_QUIP', {value: ''});
 /**
@@ -737,6 +756,11 @@ GameInstance.prototype.registerResponse = function(playerID, resp) {
 };
 GameInstance.prototype.registerVote = function(playerID, vote) {
 	let voteNum = parseInt(vote, 10);
+	
+	//console.log('Voting: '+playerID);
+	
+	if (!this.isPlayerActive(playerID)) return;
+	
 	if (this.isVoting) {
 		let mainChannel = client.channels.get(this.channelId);
 		let member = mainChannel.members.get(playerID);
@@ -825,7 +849,7 @@ const channelToGameInstance = new Map();
  *
  * @type {Map<string, GameInstance>}
  */
-const playerToGameInstance = new Map();
+const participantToGameInstance = new Map();
 
 client.on('message', msg => {
 	if (msg.content.startsWith('/ql') && !(msg.channel instanceof Discord.DMChannel)) {
@@ -896,12 +920,21 @@ client.on('message', msg => {
 					msg.channel.send('Quiplash game not active');
 				}
 				break;
+			case 'aud':
+				if (channelToGameInstance.has(msg.channel.id)) {
+					let GI = channelToGameInstance.get(msg.channel.id);
+					GI.addAudience(msg.author.id);
+				} else {
+					msg.channel.send('Quiplash game not active');
+				}
+				break;
 			case 'help':
 				msg.channel.send('__HELP__\n' +
 					'\u200B/ql create [promptURL] – Create a Quiplash game on this channel. If [promptURL] is specified, use the custom list of prompts (a text file, one line per prompt) at that URL.\n' +
 					'\u200B/ql start – Start the Quiplash game created on this channel (if there is any)\n' +
 					'\u200B/ql stop — Stop the Quiplash game on this channel\n' +
 					'\u200B/ql join — Join a Quiplash game that has been created but not started on this channel\n' +
+					'\u200B/ql aud — Join a Quiplash game as audience\n' +
 					'\u200B/ql leave — Leave the Quiplash game on this channel\n' +
 					'\u200B/ql listPlayers — Display a list of current players\n' +
 					'\u200B/ql help — Show this help');
@@ -910,8 +943,8 @@ client.on('message', msg => {
 				//msg.channel.send('Invalid command "'+msg+'"');
 		}
 	} else if (msg.channel instanceof Discord.DMChannel) {
-		if (msg.author.id !== client.user.id && playerToGameInstance.has(msg.author.id)) {
-			let GI = playerToGameInstance.get(msg.author.id);
+		if (msg.author.id !== client.user.id && participantToGameInstance.has(msg.author.id)) {
+			let GI = participantToGameInstance.get(msg.author.id);
 			if (!GI.isVoting) {
 				GI.registerResponse(msg.author.id, msg.content);
 			} else {
