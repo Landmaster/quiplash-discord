@@ -3,7 +3,9 @@
 	"version": "1.0.0",
 	"description": "Quiplash-like Discord bot.",
 	"main": "index.js",
-	"scripts": {},
+	"scripts": {
+		"start": "node index.js"
+	},
 	"author": "Landmaster <python0429@gmail.com>",
 	"license": "AGPL-3.0",
 	"dependencies": {
