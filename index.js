@@ -216,6 +216,7 @@ GameInstance.prototype.create = function() {
 		switch (autoStartTime - self.elapsedTime) {
 			case 15:
 			case 30:
+			case 60:
 				channel.send((autoStartTime - self.elapsedTime)+' seconds left until Quiplash starts automatically');
 		}
 		if (self.elapsedTime === autoStartTime) {
@@ -390,7 +391,7 @@ GameInstance.prototype.executeRound = function () {
 	}
 };
 GameInstance.prototype.finalPromptRespTime = function () {
-	return 100;
+	return 110;
 };
 GameInstance.prototype.doFinalVoting = function (frozenPlayerList, finalPrompt) {
 	this.isVoting = true;
@@ -455,6 +456,7 @@ GameInstance.prototype.doFinalVoting = function (frozenPlayerList, finalPrompt) 
 			switch (finalVoteDelayTime + finalVoteTime - (self.elapsedTime - startTime)) {
 				case 10:
 				case 25:
+				case 50:
 					let notifStr = `${finalVoteDelayTime + finalVoteTime - (self.elapsedTime - startTime)} seconds left to vote!`;
 					//channel.send('@here\n'+notifStr);
 					for (let guildMember of channel.members.values()) {
@@ -530,7 +532,7 @@ GameInstance.prototype.finalVoteDelayTime = function() {
 	return 7;
 };
 GameInstance.prototype.finalVoteTime = function() {
-	return 45;
+	return 70;
 };
 GameInstance.prototype.recap = function (final) {
 	let recapString = '';
@@ -647,6 +649,18 @@ GameInstance.prototype.doVoting = function (curPrompts, congaLine) {
 			self.votedFor1.playersInContest = [playerID, playerID0];
 		}
 		
+		switch (voteTime - (timeOffset % MODULUS - voteDelayTime)) {
+			case 25:
+			case 10:
+				let warning = (voteTime - (timeOffset % MODULUS - voteDelayTime))+' seconds left to vote!';
+				for (let playerID of self.players) {
+					let member = channel.members.get(playerID);
+					if (!member.user.bot) {
+						member.send(warning);
+					}
+				}
+		}
+		
 		if (timeOffset % MODULUS === voteDelayTime + voteTime) {
 			//console.log(self.votedFor1);
 			
@@ -725,7 +739,7 @@ GameInstance.prototype.getRoundMultipler = function() {
 	return this.round;
 };
 GameInstance.prototype.voteDelayTime = function() {return 7;};
-GameInstance.prototype.voteTime = function() {return 24;};
+GameInstance.prototype.voteTime = function() {return 45;};
 GameInstance.prototype.endVoteDelayTime = function() {return 7;};
 Object.defineProperty(GameInstance, 'SAFETY_QUIP', {value: ''});
 /**
@@ -983,6 +997,22 @@ client.login(options.token).then(token => {
 }).catch(err => {
 	console.error(err);
 });
+
+if (process.env.QUIPLASH_GLITCH) {
+	const https = require('https');
+	const express = require('express');
+	const app = express();
+	
+	app.get("/", (request, response) => {
+		console.log(Date.now() + " Ping Received");
+		response.sendStatus(200);
+	});
+	
+	app.listen(process.env.PORT);
+	setInterval(() => {
+		https.get(`https://${process.env.PROJECT_DOMAIN}.glitch.me/`);
+	}, 1000*30);
+}
 
 let LETTER_FREQ_TABLE = [8.167,
 	1.492,

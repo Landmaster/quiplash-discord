@@ -12,6 +12,7 @@
 		"bufferutil": "^3.0.3",
 		"command-line-args": "^5.0.2",
 		"discord.js": "latest",
+		"express": "latest",
 		"erlpack": "discordapp/erlpack",
 		"node-gameloop": "latest",
 		"request": "^2.88.0",
